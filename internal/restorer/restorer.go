@@ -51,7 +51,7 @@ type treeVisitor struct {
 
 // traverseTree traverses a tree from the repo and calls treeVisitor.
 // target is the path in the file system, location within the snapshot.
-func (res *Restorer) traverseTree(ctx context.Context, target, location string, treeID restic.ID, visitor treeVisitor) (hasRestored bool, err error) {
+func (res *Restorer) traverseTree(ctx context.Context, target, location string, skipUnchanged bool, treeID restic.ID, visitor treeVisitor) (hasRestored bool, err error) {
 	debug.Log("%v %v %v", target, location, treeID)
 	tree, err := restic.LoadTree(ctx, res.repo, treeID)
 	if err != nil {
@@ -91,6 +91,15 @@ func (res *Restorer) traverseTree(ctx context.Context, target, location string, 
 			continue
 		}
 
+		if skipUnchanged {
+			if targetFile, err := os.Stat(nodeTarget); !os.IsNotExist(err) {
+				if node.ModTime.Equal(targetFile.ModTime()) && node.Size == uint64(targetFile.Size()) {
+					debug.Log("Skipping target: %v\n", nodeTarget)
+					continue
+				}
+			}
+		}
+
 		selectedForRestore, childMayBeSelected := res.SelectFilter(nodeLocation, nodeTarget, node)
 		debug.Log("SelectFilter returned %v %v for %q", selectedForRestore, childMayBeSelected, nodeLocation)
 
@@ -125,7 +134,7 @@ func (res *Restorer) traverseTree(ctx context.Context, target, location string, 
 			childHasRestored := false
 
 			if childMayBeSelected {
-				childHasRestored, err = res.traverseTree(ctx, nodeTarget, nodeLocation, *node.Subtree, visitor)
+				childHasRestored, err = res.traverseTree(ctx, nodeTarget, nodeLocation, skipUnchanged, *node.Subtree, visitor)
 				err = sanitizeError(err)
 				if err != nil {
 					return hasRestored, err
@@ -209,7 +218,7 @@ func (res *Restorer) restoreEmptyFileAt(node *restic.Node, target, location stri
 
 // RestoreTo creates the directories and files in the snapshot below dst.
 // Before an item is created, res.Filter is called.
-func (res *Restorer) RestoreTo(ctx context.Context, dst string) error {
+func (res *Restorer) RestoreTo(ctx context.Context, dst string, skipUnchanged bool) error {
 	var err error
 	if !filepath.IsAbs(dst) {
 		dst, err = filepath.Abs(dst)
@@ -225,7 +234,7 @@ func (res *Restorer) RestoreTo(ctx context.Context, dst string) error {
 	debug.Log("first pass for %q", dst)
 
 	// first tree pass: create directories and collect all files to restore
-	_, err = res.traverseTree(ctx, dst, string(filepath.Separator), *res.sn.Tree, treeVisitor{
+	_, err = res.traverseTree(ctx, dst, string(filepath.Separator), skipUnchanged, *res.sn.Tree, treeVisitor{
 		enterDir: func(node *restic.Node, target, location string) error {
 			debug.Log("first pass, enterDir: mkdir %q, leaveDir should restore metadata", location)
 			// create dir with default permissions
@@ -274,7 +283,7 @@ func (res *Restorer) RestoreTo(ctx context.Context, dst string) error {
 	debug.Log("second pass for %q", dst)
 
 	// second tree pass: restore special files and filesystem metadata
-	_, err = res.traverseTree(ctx, dst, string(filepath.Separator), *res.sn.Tree, treeVisitor{
+	_, err = res.traverseTree(ctx, dst, string(filepath.Separator), skipUnchanged, *res.sn.Tree, treeVisitor{
 		visitNode: func(node *restic.Node, target, location string) error {
 			debug.Log("second pass, visitNode: restore node %q", location)
 			if node.Type != "file" {
@@ -312,7 +321,7 @@ const nVerifyWorkers = 8
 // have been successfully written to dst. It stops when it encounters an
 // error. It returns that error and the number of files it has successfully
 // verified.
-func (res *Restorer) VerifyFiles(ctx context.Context, dst string) (int, error) {
+func (res *Restorer) VerifyFiles(ctx context.Context, dst string, skipUnchanged bool) (int, error) {
 	type mustCheck struct {
 		node *restic.Node
 		path string
@@ -329,7 +338,7 @@ func (res *Restorer) VerifyFiles(ctx context.Context, dst string) (int, error) {
 	g.Go(func() error {
 		defer close(work)
 
-		_, err := res.traverseTree(ctx, dst, string(filepath.Separator), *res.sn.Tree, treeVisitor{
+		_, err := res.traverseTree(ctx, dst, string(filepath.Separator), skipUnchanged, *res.sn.Tree, treeVisitor{
 			visitNode: func(node *restic.Node, target, location string) error {
 				if node.Type != "file" {
 					return nil
