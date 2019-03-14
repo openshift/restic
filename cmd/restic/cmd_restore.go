@@ -44,6 +44,8 @@ type RestoreOptions struct {
 	Paths              []string
 	Tags               restic.TagLists
 	Verify             bool
+	SkipUnchanged      bool
+	Delete             bool
 }
 
 var restoreOptions RestoreOptions
@@ -62,6 +64,8 @@ func init() {
 	flags.Var(&restoreOptions.Tags, "tag", "only consider snapshots which include this `taglist` for snapshot ID \"latest\"")
 	flags.StringArrayVar(&restoreOptions.Paths, "path", nil, "only consider snapshots which include this (absolute) `path` for snapshot ID \"latest\"")
 	flags.BoolVar(&restoreOptions.Verify, "verify", false, "verify restored files content")
+	flags.BoolVar(&restoreOptions.SkipUnchanged, "skip-unchanged", false, "skip files that have not changed base on size and date")
+	flags.BoolVar(&restoreOptions.Delete, "delete", false, "delete files in the target that do not exist in the snapshot")
 }
 
 func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
@@ -188,7 +192,22 @@ func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
 		res.SelectFilter = selectIncludeFilter
 	}
 
+	if opts.SkipUnchanged {
+		Printf("Skip Unchanged True\n")
+	}
+
 	Verbosef("restoring %s to %s\n", res.Snapshot(), opts.Target)
+
+	if opts.Delete {
+		repo, err := OpenRepository(gopts)
+		if err != nil {
+			return err
+		}
+		err = restorer.DeleteFiles(ctx, opts.Target, opts.Hosts, opts.Paths, opts.Tags, repo, id)
+		if err != nil {
+			Warnf("Could not delete file in target: %v", err)
+		}
+	}
 
 	err = res.RestoreTo(ctx, opts.Target)
 	if err != nil {
