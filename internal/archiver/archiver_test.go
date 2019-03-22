@@ -686,7 +686,7 @@ func TestFileChanged(t *testing.T) {
 			fiBefore := lstat(t, filename)
 			node := nodeFromFI(t, filename, fiBefore)
 
-			if fileChanged(fiBefore, node, 0) {
+			if FileChanged(fiBefore, node, 0) {
 				t.Fatalf("unchanged file detected as changed")
 			}
 
@@ -696,12 +696,12 @@ func TestFileChanged(t *testing.T) {
 
 			if test.SameFile {
 				// file should be detected as unchanged
-				if fileChanged(fiAfter, node, test.ChangeIgnore) {
+				if FileChanged(fiAfter, node, test.ChangeIgnore) {
 					t.Fatalf("unmodified file detected as changed")
 				}
 			} else {
 				// file should be detected as changed
-				if !fileChanged(fiAfter, node, test.ChangeIgnore) && !test.SameFile {
+				if !FileChanged(fiAfter, node, test.ChangeIgnore) && !test.SameFile {
 					t.Fatalf("modified file detected as unchanged")
 				}
 			}
@@ -719,7 +719,7 @@ func TestFilChangedSpecialCases(t *testing.T) {
 
 	t.Run("nil-node", func(t *testing.T) {
 		fi := lstat(t, filename)
-		if !fileChanged(fi, nil, 0) {
+		if !FileChanged(fi, nil, 0) {
 			t.Fatal("nil node detected as unchanged")
 		}
 	})
@@ -728,7 +728,7 @@ func TestFilChangedSpecialCases(t *testing.T) {
 		fi := lstat(t, filename)
 		node := nodeFromFI(t, filename, fi)
 		node.Type = "symlink"
-		if !fileChanged(fi, node, 0) {
+		if !FileChanged(fi, node, 0) {
 			t.Fatal("node with changed type detected as unchanged")
 		}
 	})
