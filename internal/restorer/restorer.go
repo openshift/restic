@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
+	"github.com/restic/restic/internal/archiver"
 	"github.com/restic/restic/internal/debug"
 	"github.com/restic/restic/internal/errors"
 	"github.com/restic/restic/internal/fs"
@@ -93,8 +94,8 @@ func (res *Restorer) traverseTree(ctx context.Context, target, location string, 
 
 		if skipUnchanged {
 			if targetFile, err := os.Stat(nodeTarget); !os.IsNotExist(err) {
-				if node.ModTime.Equal(targetFile.ModTime()) && node.Size == uint64(targetFile.Size()) {
-					debug.Log("Skipping target: %v\n", nodeTarget)
+				if !archiver.FileChanged(targetFile, node, 0) {
+					debug.Log("Skipping target: %v\n", targetFile)
 					continue
 				}
 			}

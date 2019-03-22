@@ -386,7 +386,7 @@ func (arch *Archiver) Save(ctx context.Context, snPath, target string, previous 
 
 		// check if the file has not changed before performing a fopen operation (more expensive, specially
 		// in network filesystems)
-		if previous != nil && !fileChanged(fi, previous, arch.ChangeIgnoreFlags) {
+		if previous != nil && !FileChanged(fi, previous, arch.ChangeIgnoreFlags) {
 			if arch.allBlobsPresent(previous) {
 				debug.Log("%v hasn't changed, using old list of blobs", target)
 				arch.CompleteItem(snPath, previous, previous, ItemStats{}, time.Since(start))
@@ -497,7 +497,7 @@ func (arch *Archiver) Save(ctx context.Context, snPath, target string, previous 
 // fileChanged tries to detect whether a file's content has changed compared
 // to the contents of node, which describes the same path in the parent backup.
 // It should only be run for regular files.
-func fileChanged(fi os.FileInfo, node *restic.Node, ignoreFlags uint) bool {
+func FileChanged(fi os.FileInfo, node *restic.Node, ignoreFlags uint) bool {
 	switch {
 	case node == nil:
 		return true
