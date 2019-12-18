@@ -49,24 +49,24 @@ type backendWrapper func(r restic.Backend) (restic.Backend, error)
 
 // GlobalOptions hold all global options for restic.
 type GlobalOptions struct {
-	Repo            string
-	RepositoryFile  string
-	PasswordFile    string
-	PasswordCommand string
-	KeyHint         string
-	Quiet           bool
-	Verbose         int
-	NoLock          bool
-	JSON            bool
-	CacheDir        string
-	NoCache         bool
-	CACerts         []string
-	SkipSSLVerify   bool
-	TLSClientCert   string
-	CleanupCache    bool
+	Repo                  string
+	RepositoryFile        string
+	PasswordFile          string
+	PasswordCommand       string
+	KeyHint               string
+	Quiet                 bool
+	Verbose               int
+	NoLock                bool
+	JSON                  bool
+	CacheDir              string
+	NoCache               bool
+	CACerts               []string
+	InsecureSkipTLSVerify bool
+	TLSClientCert         string
+	CleanupCache          bool
 
-	LimitUploadKb   int
-	LimitDownloadKb int
+	LimitUploadKb         int
+	LimitDownloadKb       int
 
 	ctx      context.Context
 	password string
@@ -116,7 +116,7 @@ func init() {
 	f.BoolVar(&globalOptions.NoCache, "no-cache", false, "do not use a local cache")
 	f.StringSliceVar(&globalOptions.CACerts, "cacert", nil, "`file` to load root certificates from (default: use system certificates)")
 	f.StringVar(&globalOptions.TLSClientCert, "tls-client-cert", "", "path to a `file` containing PEM encoded TLS client certificate and private key")
-	f.BoolVar(&globalOptions.SkipSSLVerify, "skip-ssl-verify", false, "skip SSL certificate verification (insecure)")
+	f.BoolVar(&globalOptions.InsecureSkipTLSVerify, "insecure-skip-tls-verify", false, "skip TLS certificate verification when connecting to the repo (insecure)")
 	f.BoolVar(&globalOptions.CleanupCache, "cleanup-cache", false, "auto remove old cache directories")
 	f.IntVar(&globalOptions.LimitUploadKb, "limit-upload", 0, "limits uploads to a maximum rate in KiB/s. (default: unlimited)")
 	f.IntVar(&globalOptions.LimitDownloadKb, "limit-download", 0, "limits downloads to a maximum rate in KiB/s. (default: unlimited)")
@@ -693,7 +693,7 @@ func open(s string, gopts GlobalOptions, opts options.Options) (restic.Backend, 
 	tropts := backend.TransportOptions{
 		RootCertFilenames:        globalOptions.CACerts,
 		TLSClientCertKeyFilename: globalOptions.TLSClientCert,
-		SkipSSLVerify:            globalOptions.SkipSSLVerify,
+		InsecureSkipTLSVerify:    globalOptions.InsecureSkipTLSVerify,
 	}
 	rt, err := backend.Transport(tropts)
 	if err != nil {
@@ -774,7 +774,7 @@ func create(s string, opts options.Options) (restic.Backend, error) {
 	tropts := backend.TransportOptions{
 		RootCertFilenames:        globalOptions.CACerts,
 		TLSClientCertKeyFilename: globalOptions.TLSClientCert,
-		SkipSSLVerify:            globalOptions.SkipSSLVerify,
+		InsecureSkipTLSVerify:    globalOptions.InsecureSkipTLSVerify,
 	}
 	rt, err := backend.Transport(tropts)
 	if err != nil {

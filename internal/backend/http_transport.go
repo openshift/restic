@@ -23,8 +23,8 @@ type TransportOptions struct {
 	// contains the name of a file containing the TLS client certificate and private key in PEM format
 	TLSClientCertKeyFilename string
 
-	// Skip SSL certificate verification
-	SkipSSLVerify bool
+	// Skip TLS certificate verification
+	InsecureSkipTLSVerify bool
 }
 
 // readPEMCertKey reads a file and returns the PEM encoded certificate and key
@@ -82,7 +82,7 @@ func Transport(opts TransportOptions) (http.RoundTripper, error) {
 		TLSClientConfig:       &tls.Config{},
 	}
 
-	if opts.SkipSSLVerify {
+	if opts.InsecureSkipTLSVerify {
 		tr.TLSClientConfig.InsecureSkipVerify = true
 	}
 
