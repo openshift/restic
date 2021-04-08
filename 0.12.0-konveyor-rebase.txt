@@ -1,0 +1,20 @@
+git checkout v0.12.0
+git checkout -b 0.12.0-rebase
+
+git cherry-pick 625286affad8d83a9d7b28c8a701ec8c82e87e2c # add --delete option
+#  CONFLICT (content): Merge conflict in cmd/restic/cmd_restore.go
+git cherry-pick 01c5e13c7401bdd61022296a51e79df3df705b09 # add --skip-unchanged option
+#  CONFLICT (content): Merge conflict in internal/restorer/restorer.go
+#  CONFLICT (content): Merge conflict in cmd/restic/cmd_restore.go
+git cherry-pick a25fd93646abd27932c20016e4d8c3490800b01e # use archiver function to decide if files have changed
+#  CONFLICT (content): Merge conflict in internal/archiver/archiver_test.go
+#  CONFLICT (content): Merge conflict in internal/archiver/archiver.go
+# made necessary change in restorer.go (FileChanged call)
+git cherry-pick bb9af3f4a3b6c09bf1c92f81339a7c7e50a60b56 # Add --skip-ssl-verify flag to disable SSL certificate verification
+#  CONFLICT (content): Merge conflict in cmd/restic/global.go
+git cherry-pick 33bc048e21db19219e860ad2f7c03e61ae20b989 # Match Velero's naming convention for InsecureSkipTLSVerify flag
+#  CONFLICT (content): Merge conflict in cmd/restic/global.go
+git cherry-pick 7c150cf0fac37fe5d7577f7fc630795d716f3537 # Add BZ automation to repo
+git cherry-pick 93bc960de6349732c7cad8ec8d3208602d29370c # Update PR-BZ automation mapping (#8)
+
+# new commit, rebase log
