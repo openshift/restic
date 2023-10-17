@@ -22,7 +22,7 @@ func init() {
 	signal.Notify(cleanupHandlers.ch, syscall.SIGINT)
 }
 
-// AddCleanupHandler adds the function f to the list of cleanup handlers so
+// Comment dnm AddCleanupHandler adds the function f to the list of cleanup handlers so
 // that it is executed when all the cleanup handlers are run, e.g. when SIGINT
 // is received.
 func AddCleanupHandler(f func(code int) (int, error)) {
