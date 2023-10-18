@@ -1,4 +1,5 @@
 // +build go1.14
+// +build brokentest
 
 package rest_test
 

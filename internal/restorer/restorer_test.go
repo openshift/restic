@@ -362,7 +362,7 @@ func TestRestorer(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			err = res.RestoreTo(ctx, tempdir)
+			err = res.RestoreTo(ctx, tempdir, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -461,7 +461,7 @@ func TestRestorerRelative(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			err = res.RestoreTo(ctx, "restore")
+			err = res.RestoreTo(ctx, "restore", false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -688,7 +688,7 @@ func TestRestorerTraverseTree(t *testing.T) {
 			// make sure we're creating a new subdir of the tempdir
 			target := filepath.Join(tempdir, "target")
 
-			_, err = res.traverseTree(ctx, target, string(filepath.Separator), *sn.Tree, test.Visitor(t))
+			_, err = res.traverseTree(ctx, target, string(filepath.Separator), false, *sn.Tree, test.Visitor(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -780,7 +780,7 @@ func TestRestorerConsistentTimestampsAndPermissions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = res.RestoreTo(ctx, tempdir)
+	err = res.RestoreTo(ctx, tempdir, false)
 	rtest.OK(t, err)
 
 	var testPatterns = []struct {
@@ -800,3 +800,4 @@ func TestRestorerConsistentTimestampsAndPermissions(t *testing.T) {
 		checkConsistentInfo(t, test.path, f, test.modtime, test.mode)
 	}
 }
+
