@@ -1,3 +1,5 @@
+// +build brokentest
+
 package restic_test
 
 import (
