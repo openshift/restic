@@ -364,13 +364,13 @@ func TestRestorer(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			err = res.RestoreTo(ctx, tempdir)
+			err = res.RestoreTo(ctx, tempdir, false)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			if len(test.ErrorsMust)+len(test.ErrorsMay) == 0 {
-				_, err = res.VerifyFiles(ctx, tempdir)
+				_, err = res.VerifyFiles(ctx, tempdir, false)
 				rtest.OK(t, err)
 			}
 
@@ -468,11 +468,11 @@ func TestRestorerRelative(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			err = res.RestoreTo(ctx, "restore")
+			err = res.RestoreTo(ctx, "restore", false)
 			if err != nil {
 				t.Fatal(err)
 			}
-			nverified, err := res.VerifyFiles(ctx, "restore")
+			nverified, err := res.VerifyFiles(ctx, "restore", false)
 			rtest.OK(t, err)
 			rtest.Equals(t, len(test.Files), nverified)
 
@@ -698,7 +698,7 @@ func TestRestorerTraverseTree(t *testing.T) {
 			// make sure we're creating a new subdir of the tempdir
 			target := filepath.Join(tempdir, "target")
 
-			_, err = res.traverseTree(ctx, target, string(filepath.Separator), *sn.Tree, test.Visitor(t))
+			_, err = res.traverseTree(ctx, target, string(filepath.Separator), false, *sn.Tree, test.Visitor(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -790,7 +790,7 @@ func TestRestorerConsistentTimestampsAndPermissions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = res.RestoreTo(ctx, tempdir)
+	err = res.RestoreTo(ctx, tempdir, false)
 	rtest.OK(t, err)
 
 	var testPatterns = []struct {
@@ -833,7 +833,7 @@ func TestVerifyCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rtest.OK(t, res.RestoreTo(ctx, tempdir))
+	rtest.OK(t, res.RestoreTo(ctx, tempdir, false))
 	err = ioutil.WriteFile(filepath.Join(tempdir, "foo"), []byte("bar"), 0644)
 	rtest.OK(t, err)
 
@@ -843,7 +843,7 @@ func TestVerifyCancel(t *testing.T) {
 		return err
 	}
 
-	nverified, err := res.VerifyFiles(ctx, tempdir)
+	nverified, err := res.VerifyFiles(ctx, tempdir, false)
 	rtest.Equals(t, 0, nverified)
 	rtest.Assert(t, err != nil, "nil error from VerifyFiles")
 	rtest.Equals(t, 1, len(errs))
