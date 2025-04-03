@@ -1,6 +1,6 @@
 module github.com/restic/restic
 
-go 1.19
+go 1.23.0
 
 require (
 	cloud.google.com/go/storage v1.28.1
