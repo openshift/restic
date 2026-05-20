@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
@@ -94,7 +93,7 @@ func rewriteSnapshot(ctx context.Context, repo *repository.Repository, sn *resti
 	wg.Go(func() error {
 		filteredTree, err = walker.FilterTree(wgCtx, repo, "/", *sn.Tree, &walker.TreeFilterVisitor{
 			SelectByName: selectByName,
-			PrintExclude: func(path string) { Verbosef(fmt.Sprintf("excluding %s\n", path)) },
+			PrintExclude: func(path string) { Verbosef("excluding %s\n", path) },
 		})
 		if err != nil {
 			return err
