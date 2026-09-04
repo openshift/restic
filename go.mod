@@ -26,13 +26,13 @@ require (
 	github.com/restic/chunker v0.4.0
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
-	golang.org/x/crypto v0.53.0
-	golang.org/x/net v0.56.0
+	golang.org/x/crypto v0.55.0
+	golang.org/x/net v0.57.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.21.0
-	golang.org/x/sys v0.46.0
-	golang.org/x/term v0.44.0
-	golang.org/x/text v0.39.0
+	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.47.0
+	golang.org/x/term v0.45.0
+	golang.org/x/text v0.41.0
 	google.golang.org/api v0.274.0
 )
 
