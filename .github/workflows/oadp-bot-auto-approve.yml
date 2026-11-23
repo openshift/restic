@@ -1,0 +1,40 @@
+name: "OADP-bot Auto Approve"
+# Companion to the openshift/release tide query that pools rebasebot-app
+# PRs on the oadp-bot label: branch protection still requires reviews, and
+# these PRs (go.mod/go.sum dependency bumps from the rebase/CVE pipelines,
+# gated on green ci/prow checks) get their approvals from automation.
+# Pattern credit: velero-io/velero dependabot-auto-approve.yml.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, unlabeled]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  auto-approve:
+    if: >-
+      github.event.pull_request.user.login == 'oadp-rebasebot-app[bot]' &&
+      !contains(github.event.pull_request.labels.*.name, 'do-not-merge/hold')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto approve rebasebot PR
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Live-label check: the event snapshot can be stale if a hold was
+          # added while this run sat queued -- read the PR's current labels
+          # and fail closed (no approval) if the read fails.
+          labels=$(gh pr view "$PR_URL" --json labels --jq '[.labels[].name] | join(",")') || {
+            echo "could not read live labels; not approving" >&2
+            exit 1
+          }
+          case ",$labels," in
+            *,do-not-merge/hold,*)
+              echo "hold is set now; not approving" >&2
+              exit 0
+              ;;
+          esac
+          gh pr review --approve "$PR_URL" --body "oadp-bot: bot-auto-merge PR from the OADP rebase/CVE pipelines; approved by automation. Any human review still welcome; do-not-merge/hold freezes it."
