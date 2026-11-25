@@ -1,0 +1,368 @@
+name: "OADP-bot Auto Approve"
+# Companion to the openshift/release tide query that pools rebasebot-app
+# PRs on the oadp-bot label: branch protection still requires reviews, and
+# CVE fix PRs (go.mod/go.sum/vendor dependency bumps from the CVE
+# pipeline, gated on green ci/prow checks) get their approvals from
+# automation. Rebase PRs (rebase-bot-*) are EXCLUDED -- team decision
+# 2026-11-23: upstream rebases get a full human review. They settle the
+# scope check GREEN with a "human review required" summary (a required
+# check must not block their human merge), carry no label and no
+# verified SHA, so the approval job can never fire for them.
+# Pattern credit: velero-io/velero dependabot-auto-approve.yml.
+#
+# Division of labor: the PRODUCER pipeline (oadp-rebase) adds the
+# oadp-bot label after its own scope gate, on heads it verified, and
+# removes it on failed/manual runs. This consumer NEVER adds the label
+# -- it only verifies and removes: on every head change the scope is
+# re-derived from the CURRENT diff, and an out-of-scope, unknown-source,
+# or stale-head PR loses the label (tide pools on the label and cannot
+# filter by files). A check run (oadp-bot-scope) is settled on every
+# exit path for the head it decided on; rollout prerequisite: make it
+# a required check on the bot path. The approval below is bound to the
+# same verified SHA (explicit commit_id) and re-checks label + hold.
+on:
+  pull_request_target:
+    # edited: retargeting the PR's BASE changes the diff without any
+    # head push -- no synchronize fires, and the old label + same-SHA
+    # success check would survive a base swap.
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled, edited]
+
+permissions:
+  pull-requests: write
+  checks: write
+
+jobs:
+  scope-check:
+    if: github.event.pull_request.user.login == 'oadp-rebasebot-app[bot]'
+    runs-on: ubuntu-latest
+    outputs:
+      verified_sha: ${{ steps.decide.outputs.verified_sha }}
+      verified_base: ${{ steps.decide.outputs.verified_base }}
+      check_id: ${{ steps.decide.outputs.check_id }}
+    steps:
+      - name: Scope check bound to the PR head
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          RUN_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          # Check lifecycle: created in_progress FIRST (its ID kept),
+          # PATCHed to completed on EVERY exit path. A failed create or
+          # settle fails the job -- a check that cannot be written must
+          # not leave the approval path green. Conclusion policy: only
+          # an actually-verified head gets success; moved heads get
+          # cancelled (never neutral -- GitHub treats neutral as a PASS
+          # of a required check); out-of-scope gets failure.
+          check_id=""
+          create_check() {
+            # external_id ties the check to THIS workflow run: the same
+            # SHA can carry in_progress checks from concurrent runs
+            # (labeled + edited); the backstop settles only its own.
+            check_id=$(gh api --method POST "repos/$PR_REPO/check-runs" \
+              -f name="oadp-bot-scope" \
+              -f head_sha="$HEAD_SHA" \
+              -f external_id="$RUN_TAG" \
+              -f status=in_progress \
+              -f 'output[title]=oadp-bot scope check' \
+              -f 'output[summary]=scope check running for '"$HEAD_SHA" --jq .id) || {
+              echo "could not create the oadp-bot-scope check; failing." >&2
+              exit 1
+            }
+            # Step outputs persist even when the step later fails:
+            # the backstop settles THIS check directly.
+            echo "check_id=$check_id" >> "$GITHUB_OUTPUT"
+          }
+          settle() {
+            [ -n "$check_id" ] || { echo "no check to settle" >&2; exit 1; }
+            gh api --method PATCH "repos/$PR_REPO/check-runs/$check_id" \
+              -f status=completed \
+              -f conclusion="$1" \
+              -f 'output[title]=oadp-bot scope check' \
+              -f 'output[summary]='"$2" > /dev/null || {
+              echo "could not settle the oadp-bot-scope check (conclusion $1); failing." >&2
+              exit 1
+            }
+          }
+          create_check
+
+          # Live head + base + labels in ONE read: mixing two reads
+          # let a between-reads label-add escape the retarget removal.
+          meta=$(gh pr view "$PR_URL" --json changedFiles,headRefOid,baseRefName,labels) || {
+            settle failure "could not read the PR"; exit 1; }
+          live_head=$(jq -r .headRefOid <<< "$meta")
+          if [ "$live_head" != "$HEAD_SHA" ]; then
+            settle cancelled "head moved ($HEAD_SHA -> $live_head); this run decided nothing"
+            echo "PR head moved before the scope check; not deciding." >&2
+            exit 1
+          fi
+          # Live base (a retargeted PR changes the diff with the same
+          # head): the source branch embeds the base it was cut for
+          # (cve-fix/<repo>/<base>/...). A mismatch means the decision
+          # cannot be trusted.
+          # ONE strict, ANCHORED parser (bash case globs let * span
+          # slashes, so they both over- and under-matched): CVE fixes
+          # are exactly cve-fix/<repo>/<base>/<run> (three slash-free
+          # segments after the prefix). The repo segment must match
+          # this PR's base repo. The verified base is OUTPUT for the
+          # approval job -- one parser, no second copy. Rebase PRs
+          # (rebase-bot-<base>) exit green below -- excluded from
+          # auto-approve (team decision 2026-11-23).
+          expected_base=""
+          if [[ "$HEAD_BRANCH" =~ ^cve-fix/([^/]+)/([^/]+)/([^/]+)$ ]]; then
+            branch_repo="${BASH_REMATCH[1]}"
+            expected_base="${BASH_REMATCH[2]}"
+            if [ "$branch_repo" != "${PR_REPO##*/}" ]; then
+              echo "cve-fix repo segment $branch_repo does not match the base repo ${PR_REPO##*/}" >&2
+              expected_base=""
+            fi
+          elif [[ "$HEAD_BRANCH" =~ ^rebase-bot-(.+)$ ]]; then
+            # Excluded from auto-approve (team decision 2026-11-23):
+            # settle GREEN so a required oadp-bot-scope check cannot
+            # block the HUMAN merge, strip any stale label, and write
+            # NO verified outputs -- the approval job cannot fire
+            # without verified_sha.
+            gh pr edit "$PR_URL" --remove-label oadp-bot || true
+            # A stale oadp-bot label keeps the PR in the tide pool (no
+            # hand /lgtm /approve on exposed repos): green is only
+            # honest once the label is PROVEN gone.
+            after_labels=$(gh pr view "$PR_URL" --json labels) || {
+              settle failure "rebase PR, but could not re-read labels to confirm oadp-bot is gone -- MANUAL REMOVAL CHECK on $PR_URL"
+              exit 1
+            }
+            # POSITIVE proof of absence in ONE slurped assertion:
+            # exactly one JSON document whose labels are a valid
+            # array of named entries, none oadp-bot. -s rejects
+            # chained/duplicate outputs and empty input; any parse or
+            # query failure is non-zero. ONLY rc=0 is green.
+            if ! jq -se 'length == 1 and (.[0].labels | type == "array" and all(.[]; (.name | type) == "string" and .name != "oadp-bot"))' <<< "$after_labels" > /dev/null 2>&1; then
+              # Message only -- the decision above already failed.
+              if jq -e 'any(.labels[]?; .name == "oadp-bot")' <<< "$after_labels" > /dev/null 2>&1; then
+                settle failure "rebase PR still carries oadp-bot -- MANUAL REMOVAL NEEDED on $PR_URL"
+              else
+                settle failure "rebase PR: could not PROVE oadp-bot is absent (unreadable or ambiguous label state) -- MANUAL REMOVAL CHECK on $PR_URL"
+              fi
+              echo "stale oadp-bot label not proven removed; failing the check." >&2
+              exit 1
+            fi
+            settle success "rebase PR ($HEAD_BRANCH): auto-approve excluded -- human review required"
+            echo "rebase PR: human-review path; not auto-approving." >&2
+            exit 0
+          else
+            echo "unrecognized branch shape: $HEAD_BRANCH" >&2
+          fi
+          if [ -z "$expected_base" ]; then
+            # Unconditional removal: the producer may have added the
+            # label after the combined first read -- removal is
+            # idempotent when the label is absent.
+            gh pr edit "$PR_URL" --remove-label oadp-bot || \
+              echo "::warning::could not remove oadp-bot -- MANUAL REMOVAL NEEDED on $PR_URL" >&2
+            settle failure "source branch $HEAD_BRANCH does not match a producer shape"
+            exit 1
+          fi
+          live_base=$(jq -r .baseRefName <<< "$meta")
+          if [ "$live_base" != "$expected_base" ]; then
+            # Unconditional removal: same race as above.
+            removal="label removed"
+            gh pr edit "$PR_URL" --remove-label oadp-bot || \
+              removal="LABEL REMOVAL FAILED -- MANUAL REMOVAL NEEDED on $PR_URL"
+            settle failure "base retargeted (live $live_base, source branch built for $expected_base); $removal"
+            echo "PR base ($live_base) does not match the source branch ($HEAD_BRANCH); $removal." >&2
+            exit 1
+          fi
+
+          # Full file list, structured: `gh pr view --json files` caps at
+          # 100 (GraphQL files(first: 100)); the REST endpoint paginates.
+          # Renames are ONE entry with both paths -- both must satisfy
+          # the rule (a file moved INTO vendor/ still deletes its old
+          # out-of-scope path).
+          # gh --paginate applies --jq per page; emit one object per
+          # line and slurp them into a single array.
+          records=$(gh api --paginate "repos/$PR_REPO/pulls/$PR_NUMBER/files" \
+            --jq '.[] | {filename, previous: .previous_filename // ""}' | jq -s '.') || {
+            settle failure "could not read the PR files"; exit 1; }
+          expected=$(jq -r .changedFiles <<< "$meta")
+          count=$(jq 'length' <<< "$records")
+          if [ "$count" != "$expected" ]; then
+            settle failure "file list incomplete ($count of $expected)"
+            echo "file list incomplete ($count of $expected); not deciding." >&2
+            exit 1
+          fi
+
+          # Source identity from the PR's HEAD alone: BOTH producers
+          # push from the oadp-rebasebot org, so the repo check alone
+          # cannot tell them apart: the BRANCH names do. Rebase PRs
+          # exited green above; anything still reaching here that is
+          # not a cve-fix branch is unrecognized. No body- or
+          # comment-based authorization.
+          rule="unknown"
+          case "$HEAD_REPO" in
+            oadp-rebasebot/*)
+              case "$HEAD_BRANCH" in
+                cve-fix/*) rule="cve"; echo "PR source: CVE fix ($HEAD_BRANCH); rule go.mod/go.sum/vendor." ;;
+                *) echo "unrecognized producer branch $HEAD_BRANCH in $HEAD_REPO; keeping no label." >&2 ;;
+              esac ;;
+            *)
+              echo "PR source unknown (head $HEAD_REPO@$HEAD_BRANCH); keeping no label." >&2 ;;
+          esac
+
+          scoped=false
+          if [ "$rule" = "cve" ]; then
+            scoped=$(jq 'length > 0 and all(.[]; (.filename == "go.mod" or .filename == "go.sum" or (.filename | startswith("vendor/"))) and (.previous == "" or .previous == "go.mod" or .previous == "go.sum" or (.previous | startswith("vendor/"))))' <<< "$records")
+          fi
+
+          # Re-verify head AND base after every read: either moving
+          # mid-check invalidates the decision; no label writes, no
+          # success on a retargeted base.
+          live_now=$(gh pr view "$PR_URL" --json headRefOid,baseRefName,labels) || {
+            settle failure "could not re-read the PR head/base"; exit 1; }
+          live_head_now=$(jq -r .headRefOid <<< "$live_now")
+          live_base_now=$(jq -r .baseRefName <<< "$live_now")
+          if [ "$live_head_now" != "$HEAD_SHA" ]; then
+            settle cancelled "head moved during the check; this run decided nothing"
+            echo "PR head moved during the scope check; not writing." >&2
+            exit 1
+          fi
+          if [ "$live_base_now" != "$expected_base" ]; then
+            # Unconditional removal (idempotent when absent): the
+            # producer may label after the re-read above.
+            removal="label removed"
+            gh pr edit "$PR_URL" --remove-label oadp-bot || \
+              removal="LABEL REMOVAL FAILED -- MANUAL REMOVAL NEEDED on $PR_URL"
+            settle failure "base moved during the check (now $live_base_now, source built for $expected_base); $removal"
+            echo "PR base moved during the scope check; $removal." >&2
+            exit 1
+          fi
+
+          # Label policy: the consumer only REMOVES. Adding stays with
+          # the producer pipeline (it labels heads it verified). A
+          # labeled PR that fails any condition here loses the label.
+          if [ "$scoped" != "true" ] || [ "$rule" = "unknown" ]; then
+            # Unconditional removal (idempotent when absent): the
+            # producer may label after the re-read above.
+            gh pr edit "$PR_URL" --remove-label oadp-bot || {
+              settle failure "out of scope (rule=$rule) and could not remove oadp-bot -- MANUAL REMOVAL NEEDED on $PR_URL"
+              exit 1
+            }
+            settle failure "out of scope (rule=$rule scoped=$scoped files=$count head=$HEAD_SHA)"
+            echo "diff is out of scope or source unknown; label removed (or absent), check failed." >&2
+            exit 1
+          fi
+
+          settle success "rule=$rule scoped=$scoped files=$count head=$HEAD_SHA"
+          {
+            echo "verified_sha=$HEAD_SHA"
+            echo "verified_base=$expected_base"
+          } >> "$GITHUB_OUTPUT"
+
+  settle-scope-check:
+    needs: scope-check
+    # Backstop: an unexpected exit (signal, failed parse) after the
+    # check was created leaves it in_progress -- a required check
+    # pending forever. Settles it here: cancelled when the job was
+    # cancelled, failure otherwise; never touches a settled check.
+    # Only failure/cancelled: a skipped scope-check (non-bot PR) never
+    # created a check -- running here would spin a runner, call APIs,
+    # and could even go red on an unrelated PR for an API blip.
+    if: always() && (needs.scope-check.result == 'failure' || needs.scope-check.result == 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Settle an orphaned scope check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          RUN_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
+          CREATED_CHECK_ID: ${{ needs.scope-check.outputs.check_id }}
+        run: |
+          set -euo pipefail
+          # Primary: the check ID this run created (a step output that
+          # persists even when the scope-check step failed later) --
+          # GET by ID and settle only if still in_progress: a check
+          # the scope-check job already settled (e.g. cancelled on a
+          # moved head, with its own summary) keeps its conclusion.
+          # Fallback (the kill window between the POST and the output
+          # write): query with filter=all + check_name + pagination
+          # (the default is filter=latest, 30 per page, first page
+          # only) and match THIS run's external_id. gh api cannot take
+          # --arg for its --jq (it exits before sending the request)
+          # -- plain JSON out, jq separately.
+          sha="${{ github.event.pull_request.head.sha }}"
+          ids=""
+          if [ -n "$CREATED_CHECK_ID" ]; then
+            status=$(gh api "repos/$PR_REPO/check-runs/$CREATED_CHECK_ID" --jq .status) || {
+              echo "could not read check $CREATED_CHECK_ID" >&2; exit 1; }
+            [ "$status" = "in_progress" ] && ids="$CREATED_CHECK_ID"
+          fi
+          if [ -z "$ids" ] && [ -z "$CREATED_CHECK_ID" ]; then
+            json=$(gh api --paginate "repos/$PR_REPO/commits/$sha/check-runs?filter=all&check_name=oadp-bot-scope" \
+              | jq -s 'map(.check_runs[])') || {
+              echo "could not list check runs for $sha" >&2; exit 1; }
+            ids=$(jq -r --arg tag "$RUN_TAG" '[.[] | select(.status == "in_progress" and .external_id == $tag)] | .[].id' <<< "$json")
+          fi
+          for id in $ids; do
+            conclusion=failure
+            [ "${{ needs.scope-check.result }}" = "cancelled" ] && conclusion=cancelled
+            gh api --method PATCH "repos/$PR_REPO/check-runs/$id" \
+              -f status=completed \
+              -f conclusion="$conclusion" \
+              -f 'output[title]=oadp-bot scope check' \
+              -f 'output[summary]=settled by the backstop (scope-check result: ${{ needs.scope-check.result }})' > /dev/null || {
+              echo "could not settle orphaned check $id" >&2; exit 1; }
+          done
+
+  auto-approve:
+    needs: scope-check
+    # Approval is bound to the SAME verified SHA: the head is re-checked,
+    # the label and hold are re-read, and the review carries an explicit
+    # commit_id so it lands on the verified commit.
+    if: >-
+      needs.scope-check.result == 'success' &&
+      needs.scope-check.outputs.verified_sha != '' &&
+      needs.scope-check.outputs.verified_base != '' &&
+      github.event.pull_request.user.login == 'oadp-rebasebot-app[bot]' &&
+      contains(github.event.pull_request.labels.*.name, 'oadp-bot') &&
+      !contains(github.event.pull_request.labels.*.name, 'do-not-merge/hold')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto approve the verified head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
+          VERIFIED_SHA: ${{ needs.scope-check.outputs.verified_sha }}
+          VERIFIED_BASE: ${{ needs.scope-check.outputs.verified_base }}
+        run: |
+          set -euo pipefail
+          # Same head, label present, no hold -- read live, not the
+          # event snapshot.
+          state=$(gh pr view "$PR_URL" --json headRefOid,labels,baseRefName) || {
+            echo "could not read live PR state; not approving" >&2; exit 1; }
+          live_base=$(jq -r .baseRefName <<< "$state")
+          # The scope check's verified base (single parser -- this job
+          # never parses the branch itself).
+          [ "$live_base" = "$VERIFIED_BASE" ] || {
+            echo "PR base moved to $live_base (scope check verified $VERIFIED_BASE); not approving." >&2
+            exit 1; }
+          live_head=$(jq -r .headRefOid <<< "$state")
+          [ "$live_head" = "$VERIFIED_SHA" ] || {
+            echo "head moved since the scope check ($VERIFIED_SHA -> $live_head); not approving." >&2
+            exit 1; }
+          case ",$(jq -r '[.labels[].name] | join(",")' <<< "$state")," in
+            *,do-not-merge/hold,*) echo "hold is set; not approving" >&2; exit 0 ;;
+          esac
+          echo "$state" | jq -e '[.labels[].name] | index("oadp-bot") != null' > /dev/null || {
+            echo "oadp-bot label no longer present; not approving." >&2; exit 1; }
+          # Explicit commit_id: the approval lands on the verified commit.
+          gh api --method POST "repos/$PR_REPO/pulls/$PR_NUMBER/reviews" \
+            -f event=APPROVE \
+            -f commit_id="$VERIFIED_SHA" \
+            -f body="oadp-bot: bot-auto-merge PR from the OADP CVE pipeline (rebase PRs are never auto-approved); approved by automation after the same-head scope check passed. Any human review still welcome; do-not-merge/hold freezes it."
